@@ -75,6 +75,13 @@ runs:
         SG_SUMMARY: ${{ inputs.summary }}
         SG_FAIL: ${{ inputs.fail-on-exceed }}
       run: |
+        # GitHub runs composite `shell: bash` as `bash --noprofile --norc -e -o
+        # pipefail`. That -e is fatal here: shipgate exits non-zero *by design*
+        # when the rating exceeds --expect, so -e aborts the step at the scan and
+        # never reaches the logic below — which silently defeats
+        # fail-on-exceed:false and makes the failure path "pass" for the wrong
+        # reason. Exit codes are handled explicitly, so turn -e off.
+        set +e
         set -uo pipefail
         CLI="$GITHUB_ACTION_PATH/shipgate.py"
 
