@@ -205,11 +205,35 @@ def render_explain_html():
       "API <strong>is called</strong> &mdash; an import with no call site does "
       "not qualify.</p></div>")
     w('<div class="flag"><h3>Apple contradicts itself on what this buys you</h3>')
-    w("<p>%s</p>" % e(UNDER_13_CARVE_OUT["conflict"]))
+    w("<p>Apple's reference page lists this row with a minimum rating of "
+      "<strong>%s</strong>. Apple's 8 June 2026 news post says your overall "
+      "questionnaire responses govern and &ldquo;may result in a rating lower "
+      "than 13+&rdquo;. These cannot both be true.</p>"
+      % e(UNDER_13_CARVE_OUT["reference_min_rating"]))
     w('<div class="quote">Reference page: minimum rating <strong>%s</strong>.'
       "<br>News post, 8 June 2026: &ldquo;%s&rdquo;</div></div>"
       % (e(UNDER_13_CARVE_OUT["reference_min_rating"]),
          e(UNDER_13_CARVE_OUT["news_wording"])))
+
+    # The measured answer. This is the part nobody else has published.
+    m = UNDER_13_CARVE_OUT["carve_out_measured"]
+    w('<div class="mental"><h3>So we measured it</h3>')
+    w("<p>We ran Apple's own questionnaire in App Store Connect on %s against a "
+      "real app with no prior age rating, changing <em>only</em> the under-13 "
+      "answer between runs. Every content question was set to None.</p>"
+      % e(m["date"]))
+    w("<table><thead><tr><th>Social Media</th>"
+      "<th>Social Media Disabled for Users Under 13</th>"
+      "<th>Calculated rating</th></tr></thead><tbody>")
+    for r in m["runs"]:
+        w("<tr><td>%s</td><td><strong>%s</strong></td>"
+          "<td><span class='rating-badge r13'>%s</span></td></tr>"
+          % ("Yes" if r["social_media"] else "No",
+             "Yes" if r["under_13_disabled"] else "No",
+             e(r["calculated"])))
+    w("</tbody></table>")
+    w("<p><strong>%s</strong></p>" % e(m["finding"]))
+    w('<p class="note">%s</p></div>' % e(m["caveats"]))
 
     w("<h2>Still unknown</h2><ul>")
     for u in REQUIREMENT["unknowns"]:

@@ -164,8 +164,16 @@ border-radius:8px;padding:1rem 1.1rem;margin:1.5rem 0;background:var(--card)}
 <div class="quote">Apple: &ldquo;Users under 13 don&#x27;t have access to social media capabilities. At a minimum, the Declared Age Range API is called to check users&#x27; age ranges before enabling social media features. Only age-appropriate UGC is delivered.&rdquo;</div>
 <p>If you take this option, Apple requires that the Declared Age Range API <strong>is called</strong> &mdash; an import with no call site does not qualify.</p></div>
 <div class="flag"><h3>Apple contradicts itself on what this buys you</h3>
-<p>Apple&#x27;s reference page lists this row with a minimum rating of 13+. Apple&#x27;s 8 June 2026 news post says your overall questionnaire responses govern and &quot;may result in a rating lower than 13+&quot;. These cannot both be true. If a sub-13 rating is the reason you are taking the carve-out, do not assume you get it — the only way to know today is to answer the questionnaire in App Store Connect and read the calculated rating before you submit.</p>
+<p>Apple's reference page lists this row with a minimum rating of <strong>13+</strong>. Apple's 8 June 2026 news post says your overall questionnaire responses govern and &ldquo;may result in a rating lower than 13+&rdquo;. These cannot both be true.</p>
 <div class="quote">Reference page: minimum rating <strong>13+</strong>.<br>News post, 8 June 2026: &ldquo;If you indicate that your app or game includes social media capabilities but they are disabled for anyone under 13, it won&#x27;t be included in the Time Allowance category for Social Media for users under 13. You&#x27;ll also need to use the Declared Age Range API (at a minimum) to check users&#x27; age ranges. If you select this option, your overall responses in the age rating questionnaire determine your age rating and may result in a rating lower than 13+.&rdquo;</div></div>
+<div class="mental"><h3>So we measured it</h3>
+<p>We ran Apple's own questionnaire in App Store Connect on 2026-07-31 against a real app with no prior age rating, changing <em>only</em> the under-13 answer between runs. Every content question was set to None.</p>
+<table><thead><tr><th>Social Media</th><th>Social Media Disabled for Users Under 13</th><th>Calculated rating</th></tr></thead><tbody>
+<tr><td>Yes</td><td><strong>Yes</strong></td><td><span class='rating-badge r13'>13+</span></td></tr>
+<tr><td>Yes</td><td><strong>No</strong></td><td><span class='rating-badge r13'>13+</span></td></tr>
+</tbody></table>
+<p><strong>Taking the under-13 carve-out did NOT reduce the calculated age rating. Both runs returned 13+. On this evidence the carve-out changes your Time Allowance placement for under-13 users — which is what the 8 June news post actually promises — but not the age rating shown on your product page. If a sub-13 rating is why you were planning to take it, it does not buy you that.</strong></p>
+<p class="note">One app, one platform, one date. Not tested: Social Media = NO as a baseline, or the carve-out with Age Assurance = NO. Apple can change the calculation silently, and the questionnaire&#x27;s calculated rating is not a guarantee of what App Review ultimately assigns.</p></div>
 <h2>Still unknown</h2><ul>
 <li>Apple has published a month, not a day. Treat 1 September 2026 as the date.</li>
 <li>Whether watchOS-only, tvOS-only, visionOS-only and Mac Catalyst submissions get the same questionnaire is unverified.</li>

@@ -773,9 +773,9 @@ def render_text(rep, use_color):
             if not chk["ok"]:
                 out.append(c("2", "        " + chk["detail"], use_color))
         out.append("")
-        out.append(c("1;35", "  ⚑ Apple contradicts itself on what this buys you:",
-                     use_color))
-        out.append("  " + UNDER_13_CARVE_OUT["conflict"])
+        out.append(c("1;35", "  ⚑ What the carve-out actually buys you:", use_color))
+        out.append("  " + UNDER_13_CARVE_OUT["carve_out_measured"]["finding"])
+        out.append(c("2", "  " + UNDER_13_CARVE_OUT["conflict"], use_color))
         out.append("")
 
     if rep["interview_applied"]:
@@ -890,6 +890,15 @@ def render_explain(use_color):
                     UNDER_13_CARVE_OUT["reference_min_rating"]), use_color))
     out.append("  \"%s\"" % UNDER_13_CARVE_OUT["definition"])
     out.append(c("35", "  " + UNDER_13_CARVE_OUT["conflict"], use_color))
+    m = UNDER_13_CARVE_OUT["carve_out_measured"]
+    out.append(c("1", "  Measured in App Store Connect, %s:" % m["date"], use_color))
+    for r in m["runs"]:
+        out.append("    Social Media=%-3s  under-13 disabled=%-3s  → calculated %s"
+                   % ("yes" if r["social_media"] else "no",
+                      "yes" if r["under_13_disabled"] else "no",
+                      c("1;36", r["calculated"], use_color)))
+    out.append("  " + m["finding"])
+    out.append(c("2", "  " + m["caveats"], use_color))
     out.append("")
     out.append(c("1", "Still unknown", use_color))
     for u in REQUIREMENT["unknowns"]:

@@ -177,11 +177,43 @@ UNDER_13_CARVE_OUT = {
         "Apple's reference page lists this row with a minimum rating of 13+. "
         "Apple's 8 June 2026 news post says your overall questionnaire responses "
         "govern and \"may result in a rating lower than 13+\". These cannot both "
-        "be true. If a sub-13 rating is the reason you are taking the carve-out, "
-        "do not assume you get it — the only way to know today is to answer the "
-        "questionnaire in App Store Connect and read the calculated rating "
-        "before you submit."
+        "be true. Measured in App Store Connect on 31 July 2026, the reference "
+        "page is what the questionnaire actually implements: the carve-out does "
+        "not lower the calculated rating below 13+."
     ),
+    # Answered empirically rather than left open, because this is the question
+    # every kids/education developer is actually asking. Run against a real app
+    # in App Store Connect (no prior age rating), iOS, with every content
+    # question set to NONE and every other capability NO except User-Generated
+    # Content = YES, Social Media = YES, Age Assurance = YES. The questionnaire
+    # was cancelled, not saved, so no rating was applied to the app.
+    "carve_out_measured": {
+        "date": "2026-07-31",
+        "method": (
+            "App Store Connect age-rating questionnaire, 7 steps, calculated "
+            "rating read on step 7 before saving. Only the "
+            "'Social Media Disabled for Users Under 13' answer was changed "
+            "between the two runs."
+        ),
+        "runs": [
+            {"social_media": True, "under_13_disabled": True, "calculated": "13+"},
+            {"social_media": True, "under_13_disabled": False, "calculated": "13+"},
+        ],
+        "finding": (
+            "Taking the under-13 carve-out did NOT reduce the calculated age "
+            "rating. Both runs returned 13+. On this evidence the carve-out "
+            "changes your Time Allowance placement for under-13 users — which is "
+            "what the 8 June news post actually promises — but not the age "
+            "rating shown on your product page. If a sub-13 rating is why you "
+            "were planning to take it, it does not buy you that."
+        ),
+        "caveats": (
+            "One app, one platform, one date. Not tested: Social Media = NO as a "
+            "baseline, or the carve-out with Age Assurance = NO. Apple can "
+            "change the calculation silently, and the questionnaire's calculated "
+            "rating is not a guarantee of what App Review ultimately assigns."
+        ),
+    },
     "sources": [
         "https://developer.apple.com/help/app-store-connect/reference/age-ratings-values-and-definitions",
         "https://developer.apple.com/news/?id=0d2gpmml",
