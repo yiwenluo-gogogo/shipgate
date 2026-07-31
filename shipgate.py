@@ -15,7 +15,8 @@ Usage:
 
 Exit status is non-zero when any capability lands above 4+, so it drops into CI.
 
-Stdlib only — no install step. Run with any Python 3.8+.
+Stdlib only — no install step. Run with any Python 3.9+ (CI proves 3.9/3.11/3.13;
+macOS has shipped 3.9 since Monterey).
 
 Guidance tool, not legal advice. Apple's wording changes; every quote carries its
 source URL so you can re-check before a submission you are betting on.
@@ -30,7 +31,8 @@ import sys
 import zipfile
 
 from capability_db import (CAPABILITIES, CAPABILITY_ORDER, INTERVIEW,
-                           REQUIREMENT, UNDER_13_CARVE_OUT, max_rating)
+                           RATING_ORDER, REQUIREMENT, UNDER_13_CARVE_OUT,
+                           max_rating)
 from signals import (ADVERTISING_PURPOSES, NON_SOCIAL_CONTENT_TYPES, SIGNALS,
                      USER_CONTENT_DATA_TYPES, leg_of)
 
@@ -802,6 +804,66 @@ def render_text(rep, use_color):
     return "\n".join(out)
 
 
+def render_markdown(rep, expect):
+    """Compact summary for a CI job summary or a PR comment.
+
+    Deliberately short: a wall of evidence in a job summary is skipped. The
+    headline answer, the rating delta, and the questions a human still has to
+    answer — everything else is in the JSON/HTML artifact.
+    """
+    exceeded = (RATING_ORDER.index(rep["minimum_rating"])
+                > RATING_ORDER.index(expect))
+    mark = {"yes": "🔴", "likely-yes": "🟠", "unclear": "🟡",
+            "likely-no": "🔵", "no": "🟢"}
+    out = ["### ShipGate — Apple capability questions", ""]
+    if exceeded:
+        out.append("> [!WARNING]")
+        out.append("> Predicted rating **%s** exceeds the expected **%s**."
+                   % (rep["minimum_rating"], expect))
+    else:
+        out.append("Predicted minimum age rating: **%s** (expected %s or lower)."
+                   % (rep["minimum_rating"], expect))
+    if rep["worst_case_rating"] != rep["minimum_rating"]:
+        out.append("")
+        out.append("Rises to **%s** if the unclear answers turn out to be yes."
+                   % rep["worst_case_rating"])
+    out.append("")
+    out.append("| Question | Predicted | Minimum |")
+    out.append("| --- | --- | --- |")
+    for key in CAPABILITY_ORDER:
+        cap = rep["capabilities"][key]
+        out.append("| %s | %s %s | %s |" % (
+            cap["label"], mark[cap["answer"]],
+            cap["answer"].replace("-", " "), cap["min_rating"]))
+    if rep["time_allowance_social"]:
+        out.append("")
+        out.append("Placed in the iOS 27 **Social Media Time Allowance** category; "
+                   "Social Media descriptor on the product page; incompatible with "
+                   "Made for Kids.")
+    if rep["definition_conflict"]:
+        out.append("")
+        out.append("> [!IMPORTANT]")
+        out.append("> Apple's two definitions disagree about this app — in scope "
+                   "under the 9 July 2026 news post, out of scope under the "
+                   "reference page.")
+    carve = rep["carve_out"]
+    if carve["relevant"] and carve["verdict"] in ("missing", "incomplete"):
+        out.append("")
+        out.append("> [!WARNING]")
+        out.append("> Under-13 carve-out **%s** — %s"
+                   % (carve["verdict"], carve["summary"]))
+    if rep["interview_pending"]:
+        out.append("")
+        out.append("<details><summary>%d question(s) static analysis cannot "
+                   "answer</summary>\n" % len(rep["interview_pending"]))
+        for q in rep["interview_pending"]:
+            out.append("- **%s** %s" % (q["id"], q["q"]))
+        out.append("\nAnswer them once and commit the file: "
+                   "`shipgate.py PATH --answers-template > answers.json`")
+        out.append("</details>")
+    return "\n".join(out)
+
+
 def render_explain(use_color):
     """The rulebook, as a CLI command — five questions and what each one costs."""
     out = [c("1", "Apple's age-rating capability questions, and what each costs",
@@ -870,10 +932,24 @@ def main():
                     help="Print a blank answers file and exit")
     ap.add_argument("--explain", action="store_true",
                     help="Print the rulebook: the five questions and what each costs")
+    ap.add_argument("--expect", metavar="RATING", default="4+",
+                    help="Exit non-zero only if the predicted rating EXCEEDS this. "
+                         "Default 4+. In CI, set it to your app's current App Store "
+                         "rating so the build fails when a change would raise it — "
+                         "an app that is legitimately 13+ should not have permanently "
+                         "red CI. One of: " + ", ".join(RATING_ORDER))
+    ap.add_argument("--markdown", action="store_true",
+                    help="Emit a compact Markdown summary (for a CI job summary "
+                         "or a PR comment)")
     ap.add_argument("--no-color", action="store_true", help="Disable ANSI color")
     args = ap.parse_args()
 
     use_color = not args.no_color and sys.stdout.isatty()
+
+    if args.expect not in RATING_ORDER:
+        print("error: --expect must be one of %s (got %r)"
+              % (", ".join(RATING_ORDER), args.expect), file=sys.stderr)
+        return 2
 
     if args.explain:
         if args.html:
@@ -943,11 +1019,17 @@ def main():
 
     if args.json:
         print(json.dumps(rep, indent=2))
+    elif args.markdown:
+        print(render_markdown(rep, args.expect))
     elif not args.html:
         print(render_text(rep, use_color))
 
-    # Non-zero when anything pushes you above the 4+ floor, so CI notices.
-    return 1 if rep["minimum_rating"] != "4+" else 0
+    # Non-zero only when the rating EXCEEDS what you said to expect. Defaulting
+    # --expect to 4+ preserves "fail on anything above the floor", while an app
+    # that is deliberately 13+ can set --expect 13+ and still get a signal the
+    # day a change would push it to 16+.
+    return 1 if (RATING_ORDER.index(rep["minimum_rating"])
+                 > RATING_ORDER.index(args.expect)) else 0
 
 
 if __name__ == "__main__":

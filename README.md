@@ -49,8 +49,45 @@ python3 shipgate.py /path/to/YourApp --answers-template > answers.json
 python3 shipgate.py /path/to/YourApp --answers answers.json
 ```
 
-Exit status is `1` when any capability pushes you above the 4+ floor, `0`
-otherwise — so it drops straight into a CI step or an Xcode build phase.
+Exit status is `1` when the predicted rating **exceeds `--expect`** (default `4+`),
+`0` otherwise — so it drops straight into a CI step or an Xcode build phase.
+
+## In CI
+
+```yaml
+- uses: yiwenluo-gogogo/shipgate@main
+  with:
+    path: .
+    expect: '13+'        # your app's CURRENT App Store rating
+```
+
+Set `expect` to what your app is rated **today**. The build then fails only when a
+change would *raise* it — which is the alert you actually want. An app that is
+legitimately 13+ should not sit permanently red, and a permanently-red check is one
+everybody learns to ignore.
+
+The action writes a Markdown summary to the job summary, can emit the HTML report as
+an artifact, and exposes outputs you can branch on:
+
+| Input | Default | |
+| --- | --- | --- |
+| `path` | `.` | Project directory to scan |
+| `expect` | `4+` | Fail only above this rating |
+| `answers` | — | Interview answers JSON (see `--answers-template`) |
+| `report` | — | Write the HTML report here |
+| `json` | — | Write the JSON report here |
+| `summary` | `true` | Markdown summary in the job summary |
+| `fail-on-exceed` | `true` | Set `false` to report without failing |
+
+Outputs: `rating`, `worst-case-rating`, `social-media`, `exceeded`, `open-questions`.
+
+Answer the interview once and commit the file so CI isn't guessing at the things
+static analysis genuinely cannot see:
+
+```bash
+python3 shipgate.py . --interview            # answer them
+python3 shipgate.py . --answers answers.json # then in CI, via the `answers` input
+```
 
 ## What it answers
 
@@ -201,6 +238,8 @@ capabilities as yours is worse than no tool. Dot-directories are now pruned.
 | [`report.py`](report.py) | Single-file HTML report |
 | [`validate.py`](validate.py) | Accuracy harness against a labelled corpus |
 | [`labels.example.json`](labels.example.json) | Corpus format and labelling discipline |
+| [`action.yml`](action.yml) | GitHub Action (composite) |
+| [`tests/run_fixtures.sh`](tests/run_fixtures.sh) | Regression suite — needs no private corpus |
 
 ## Disclaimer
 

@@ -1,0 +1,127 @@
+name: 'ShipGate'
+description: >-
+  Predict your answers to Apple's App Store age-rating capability questions
+  before you submit, and fail the build when a change would raise your rating.
+author: 'yiwenluo-gogogo'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  path:
+    description: 'Xcode project directory to scan.'
+    required: false
+    default: '.'
+  expect:
+    description: >-
+      Your app''s current App Store age rating (4+, 9+, 13+, 16+, 18+). The
+      action fails only when the predicted rating EXCEEDS this, so an app that
+      is legitimately 13+ does not sit permanently red — it fails the day a
+      change would push it to 16+.
+    required: false
+    default: '4+'
+  answers:
+    description: >-
+      Path to a JSON file of interview answers (see --answers-template). Static
+      analysis cannot determine reach, server-driven features or moderation;
+      supplying answers turns the open questions into a settled answer sheet.
+    required: false
+    default: ''
+  report:
+    description: 'Write a single-file HTML report to this path (uploadable as an artifact).'
+    required: false
+    default: ''
+  json:
+    description: 'Write the full JSON report to this path.'
+    required: false
+    default: ''
+  summary:
+    description: 'Write a Markdown summary to the GitHub job summary.'
+    required: false
+    default: 'true'
+  fail-on-exceed:
+    description: 'Fail the step when the predicted rating exceeds `expect`. Set false to report only.'
+    required: false
+    default: 'true'
+
+outputs:
+  rating:
+    description: 'Predicted minimum age rating.'
+    value: ${{ steps.scan.outputs.rating }}
+  worst-case-rating:
+    description: 'Rating if every unclear answer turns out to be yes.'
+    value: ${{ steps.scan.outputs.worst_case_rating }}
+  social-media:
+    description: 'Predicted answer to the Social Media question.'
+    value: ${{ steps.scan.outputs.social_media }}
+  exceeded:
+    description: 'true when the predicted rating exceeds `expect`.'
+    value: ${{ steps.scan.outputs.exceeded }}
+  open-questions:
+    description: 'Count of questions static analysis cannot answer.'
+    value: ${{ steps.scan.outputs.open_questions }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: scan
+      shell: bash
+      env:
+        SG_PATH: ${{ inputs.path }}
+        SG_EXPECT: ${{ inputs.expect }}
+        SG_ANSWERS: ${{ inputs.answers }}
+        SG_REPORT: ${{ inputs.report }}
+        SG_JSON: ${{ inputs.json }}
+        SG_SUMMARY: ${{ inputs.summary }}
+        SG_FAIL: ${{ inputs.fail-on-exceed }}
+      run: |
+        set -uo pipefail
+        CLI="$GITHUB_ACTION_PATH/shipgate.py"
+
+        args=("$SG_PATH" --expect "$SG_EXPECT" --no-color)
+        [ -n "$SG_ANSWERS" ] && args+=(--answers "$SG_ANSWERS")
+        [ -n "$SG_REPORT" ] && args+=(--html "$SG_REPORT")
+
+        json_out="${SG_JSON:-$RUNNER_TEMP/shipgate.json}"
+        python3 "$CLI" "${args[@]}" --json > "$json_out"
+        status=$?
+
+        if [ "$status" -eq 2 ]; then
+          echo "::error::shipgate could not run (bad --expect value or path)"
+          exit 2
+        fi
+        if [ ! -s "$json_out" ]; then
+          echo "::error::shipgate produced no output (exit $status)"
+          exit 1
+        fi
+
+        python3 - "$json_out" >> "$GITHUB_OUTPUT" <<'PY'
+        import json, sys
+        r = json.load(open(sys.argv[1]))
+        print("rating=%s" % r["minimum_rating"])
+        print("worst_case_rating=%s" % r["worst_case_rating"])
+        print("social_media=%s" % r["capabilities"]["social_media"]["answer"])
+        print("open_questions=%d" % len(r["interview_pending"]))
+        PY
+
+        rating=$(python3 -c \
+          'import json,sys;print(json.load(open(sys.argv[1]))["minimum_rating"])' \
+          "$json_out")
+
+        # Second invocation: --json and --markdown are separate output modes.
+        # The scan is deterministic, so the two runs cannot disagree.
+        if [ "$SG_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+          python3 "$CLI" "${args[@]}" --markdown >> "$GITHUB_STEP_SUMMARY" || true
+        fi
+
+        # `status` is shipgate's own --expect comparison. Trust it rather than
+        # re-deriving the rating ordering here, so there is one source of truth.
+        if [ "$status" -ne 0 ]; then
+          echo "exceeded=true" >> "$GITHUB_OUTPUT"
+          echo "::error title=Age rating would rise::Predicted $rating exceeds expected $SG_EXPECT"
+          if [ "$SG_FAIL" = "true" ]; then exit 1; fi
+        else
+          echo "exceeded=false" >> "$GITHUB_OUTPUT"
+          echo "Predicted minimum age rating: $rating (expected $SG_EXPECT or lower)"
+        fi
+        exit 0

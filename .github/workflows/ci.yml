@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  fixtures:
+    name: fixtures (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Backs the "any Python 3.9+, stdlib only" claim in the README rather
+        # than asserting it. macOS has shipped 3.9 since Monterey.
+        python: ['3.9', '3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: No third-party imports (stdlib only is the whole install story)
+        run: |
+          python3 - <<'PY'
+          import ast, pathlib, sys
+          stdlib = set(sys.stdlib_module_names) if hasattr(sys, "stdlib_module_names") else None
+          local = {"capability_db", "signals", "report", "shipgate", "validate"}
+          bad = []
+          for p in pathlib.Path(".").glob("*.py"):
+              for node in ast.walk(ast.parse(p.read_text())):
+                  names = []
+                  if isinstance(node, ast.Import):
+                      names = [a.name.split(".")[0] for a in node.names]
+                  elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                      names = [node.module.split(".")[0]]
+                  for n in names:
+                      if n in local:
+                          continue
+                      if stdlib is not None and n not in stdlib:
+                          bad.append("%s: %s" % (p, n))
+          if bad:
+              print("non-stdlib imports found:"); print("\n".join(bad)); sys.exit(1)
+          print("stdlib only: ok")
+          PY
+      - name: Fixture regression suite
+        run: ./tests/run_fixtures.sh
+
+  action:
+    name: dogfood the action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A curated content app must not be dragged above 4+.
+      - name: Clean fixture passes
+        id: clean
+        uses: ./
+        with:
+          path: tests/fixtures/clean-app
+          expect: '4+'
+          report: clean-report.html
+      - name: Check clean outputs
+        run: |
+          test "${{ steps.clean.outputs.rating }}" = "4+"
+          test "${{ steps.clean.outputs.social-media }}" = "no"
+          test "${{ steps.clean.outputs.exceeded }}" = "false"
+          test -s clean-report.html
+          echo "clean fixture ok"
+
+      # An app that is legitimately 13+ should not sit permanently red.
+      - name: Social fixture passes when expected
+        id: social
+        uses: ./
+        with:
+          path: tests/fixtures/social-app
+          expect: '13+'
+      - name: Check social outputs
+        run: |
+          test "${{ steps.social.outputs.rating }}" = "13+"
+          test "${{ steps.social.outputs.social-media }}" = "yes"
+          test "${{ steps.social.outputs.exceeded }}" = "false"
+          echo "social fixture ok"
+
+      # The failure path has to actually fail, or the action is decoration.
+      - name: Social fixture fails when it would raise the rating
+        id: rising
+        continue-on-error: true
+        uses: ./
+        with:
+          path: tests/fixtures/social-app
+          expect: '4+'
+      - name: Check the failure path really failed
+        run: |
+          if [ "${{ steps.rising.outcome }}" != "failure" ]; then
+            echo "::error::action should have failed when the rating rises"; exit 1
+          fi
+          test "${{ steps.rising.outputs.exceeded }}" = "true"
+          echo "failure path ok"
+
+      # Report-only mode must surface the problem without failing the build.
+      - name: Report-only mode does not fail
+        id: reportonly
+        uses: ./
+        with:
+          path: tests/fixtures/social-app
+          expect: '4+'
+          fail-on-exceed: 'false'
+      - name: Check report-only
+        run: |
+          test "${{ steps.reportonly.outputs.exceeded }}" = "true"
+          echo "report-only ok"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shipgate-report
+          path: clean-report.html
+          if-no-files-found: warn
+
+  page:
+    name: public page is reproducible
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.13' }
+      # web/index.html is generated from capability_db.py. If it drifts, the
+      # public explainer disagrees with the classifier it advertises.
+      - run: |
+          python3 shipgate.py --explain --html /tmp/page.html
+          diff -u web/index.html /tmp/page.html || {
+            echo "::error::web/index.html is stale — run: python3 shipgate.py --explain --html web/index.html"
+            exit 1
+          }
+          echo "page reproducible"
