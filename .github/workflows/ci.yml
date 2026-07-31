@@ -91,12 +91,16 @@ jobs:
         with:
           path: tests/fixtures/social-app
           expect: '4+'
+      # NB: assert on `outcome` only. A composite action that exits non-zero does
+      # not reliably export its outputs, so `steps.rising.outputs.exceeded` is
+      # empty here even though the action wrote it before failing. The
+      # report-only step below is where the `exceeded` output gets asserted,
+      # because that path exits 0.
       - name: Check the failure path really failed
         run: |
           if [ "${{ steps.rising.outcome }}" != "failure" ]; then
             echo "::error::action should have failed when the rating rises"; exit 1
           fi
-          test "${{ steps.rising.outputs.exceeded }}" = "true"
           echo "failure path ok"
 
       # Report-only mode must surface the problem without failing the build.

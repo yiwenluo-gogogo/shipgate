@@ -61,15 +61,28 @@ python3 "$CLI" --answers-template >/dev/null 2>&1 && echo "  ok   --answers-temp
 
 # The public page must stay reproducible from capability_db.py, or it silently
 # drifts from the rules the CLI applies.
-tmp=$(mktemp -t shipgate-page)
-python3 "$CLI" --explain --html "$tmp" >/dev/null 2>&1
-if diff -q "$tmp" "$HERE/../web/index.html" >/dev/null 2>&1; then
-  echo "  ok   web/index.html reproducible from capability_db.py"
-else
-  echo "  FAIL web/index.html is stale — run: shipgate.py --explain --html web/index.html"
+#
+# NB: `mktemp -t PREFIX` is a BSD/macOS spelling; GNU coreutils reads -t as
+# "template" and rejects it for having too few X's. The explicit XXXXXX template
+# works on both. It failed exactly this way on a Linux runner, and — worse — the
+# missing temp file made the diff fail, which this reported as "page is stale".
+# A broken harness must not masquerade as a content failure, hence the guard.
+tmp="$(mktemp "${TMPDIR:-/tmp}/shipgate-page.XXXXXX" 2>/dev/null)" || tmp=""
+if [ -z "$tmp" ]; then
+  echo "  FAIL could not create a temp file (harness problem, not a stale page)"
   fail=1
+else
+  if ! python3 "$CLI" --explain --html "$tmp" >/dev/null 2>&1; then
+    echo "  FAIL --explain --html could not write the page"
+    fail=1
+  elif diff -q "$tmp" "$HERE/../web/index.html" >/dev/null 2>&1; then
+    echo "  ok   web/index.html reproducible from capability_db.py"
+  else
+    echo "  FAIL web/index.html is stale — run: shipgate.py --explain --html web/index.html"
+    fail=1
+  fi
+  rm -f "$tmp"
 fi
-rm -f "$tmp"
 
 [ $fail -eq 0 ] && echo "all passed" || echo "FAILURES"
 exit $fail
