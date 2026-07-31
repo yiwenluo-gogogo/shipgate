@@ -1,0 +1,31 @@
+{
+  "_comment": "Template for your own labelled corpus. Copy to labels.json, point the paths at real projects, and label each one the way a knowledgeable reviewer would answer Apple's Social Media question — BEFORE you run the classifier against it. Labels written after seeing the output measure nothing.",
+  "_scale": {
+    "yes": "A reviewer would answer yes to Apple's Social Media question.",
+    "no": "A reviewer would answer no.",
+    "ambiguous": "Genuinely undecidable without asking the developer. Scored correct only if the tool declines to commit — see validate.py."
+  },
+  "_why_ambiguous_matters": "If almost every app you label is trivially yes or no, you do not need a classifier — you need a one-page explainer. The size of the ambiguous band is the thing worth measuring.",
+  "apps": [
+    {
+      "path": "../SomeSocialApp",
+      "social_media": "yes",
+      "note": "Public feed of user posts with likes, comments and a follower graph. Unambiguous."
+    },
+    {
+      "path": "../SomeSharedSpaceApp",
+      "social_media": "ambiguous",
+      "note": "Comments among invited members of a private group, no public discovery surface. Out of scope under Apple's reference-page definition ('visibly spreads content to many users'), arguably in scope under the 9 July 2026 news post that drops the clause."
+    },
+    {
+      "path": "../SomeContentApp",
+      "social_media": "no",
+      "note": "Editorially curated content, favourites stored locally. No user-generated content at all."
+    },
+    {
+      "path": "../SomeGame",
+      "social_media": "no",
+      "note": "Game Center leaderboards only. Apple-managed aliases, no feed of the app's own."
+    }
+  ]
+}

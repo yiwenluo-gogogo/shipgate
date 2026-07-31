@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.preview/
+report.html
+answers.json
+labels.json
