@@ -656,6 +656,201 @@ def carve_out_status(fired, social_answer):
             "relevant": relevant}
 
 
+
+# ── remediation ──────────────────────────────────────────────────────────
+def remediation(rep, target="4+"):
+    """What would actually have to change to reach `target`.
+
+    A rating is a diagnosis; this is the treatment. Generic advice would be
+    useless, so every action points at the specific evidence driving the
+    capability and says which structural leg it belongs to.
+    """
+    steps = []
+    ti = RATING_ORDER.index(target)
+    for key in CAPABILITY_ORDER:
+        cap = rep["capabilities"][key]
+        if cap["answer"] not in ("yes", "likely-yes", "unclear"):
+            continue
+        if RATING_ORDER.index(cap["min_rating"]) <= ti:
+            continue  # this capability cannot push you above the target
+        ev = sorted(cap["evidence"], key=lambda r: -RANK[r["confidence"]])
+        actions = []
+        if key == "social_media":
+            disc = [r for r in ev if "discovery" in r["legs"]]
+            ugc = [r for r in ev if "ugc" in r["legs"]]
+            actions.append(
+                "Social Media needs BOTH legs. Break either one and the answer "
+                "becomes no — you do not have to remove both.")
+            if disc:
+                actions.append(
+                    "Discovery/amplification leg — remove the surface or the "
+                    "verb: " + ", ".join(sorted({r["signal"] for r in disc})))
+            if ugc:
+                actions.append(
+                    "User-content leg — stop showing other users' content on "
+                    "that surface: " + ", ".join(sorted({r["signal"] for r in ugc})))
+            actions.append(
+                "Gating the surface behind Declared Age Range does NOT lower "
+                "the calculated rating — measured in App Store Connect, the "
+                "carve-out still returns 13+. It changes Time Allowance "
+                "placement, not your product-page rating.")
+        elif key == "web_access":
+            actions.append(
+                "Constrain the web view: implement WKNavigationDelegate's "
+                "decidePolicyFor and allowlist your own hosts.")
+            actions.append(
+                "Or hand external links to Safari via UIApplication.open — "
+                "Apple's wording is \"navigate to any webpage WITHIN the app\", "
+                "so out-of-app links are not this question.")
+        else:
+            actions.append(
+                "Remove or gate the feature behind a build flag if you need "
+                "this answer to be no.")
+        steps.append({
+            "capability": key,
+            "label": cap["label"],
+            "answer": cap["answer"],
+            "min_rating": cap["min_rating"],
+            "actions": actions,
+            "evidence": [{"signal": r["signal"],
+                          "where": ["%s:%s" % (h["file"], h["line"])
+                                    for h in r["hits"][:3]]}
+                         for r in ev[:4]],
+        })
+    return steps
+
+
+
+def answer_snapshot(rep):
+    """The comparable part of a report — answers only, no file:line noise."""
+    snap = {"minimum_rating": rep["minimum_rating"],
+            "capabilities": {k: v["answer"]
+                             for k, v in rep["capabilities"].items()}}
+    snap["in_app_controls"] = {k: v["answer"]
+                               for k, v in (rep.get("in_app_controls") or {}).items()}
+    return snap
+
+
+def compare_baseline(rep, baseline):
+    """Which answers got STRICTER since the baseline.
+
+    --expect catches "you are above a threshold". This catches "this PR changed
+    what you would answer", which is the question an app already sitting at 13+
+    actually needs answered.
+    """
+    cur = answer_snapshot(rep)
+    order = {a: i for i, a in enumerate(ANSWERS)}
+    regressions, changes = [], []
+    for key, now in cur["capabilities"].items():
+        was = (baseline.get("capabilities") or {}).get(key)
+        if was is None or was == now:
+            continue
+        rec = {"capability": key, "label": CAPABILITIES[key]["label"],
+               "was": was, "now": now,
+               "min_rating": CAPABILITIES[key]["min_rating"]}
+        changes.append(rec)
+        if order.get(now, 0) > order.get(was, 0):
+            regressions.append(rec)
+    rating_rose = (RATING_ORDER.index(cur["minimum_rating"])
+                   > RATING_ORDER.index(baseline.get("minimum_rating", "4+")))
+    return {"regressions": regressions, "changes": changes,
+            "rating_was": baseline.get("minimum_rating"),
+            "rating_now": cur["minimum_rating"],
+            "rating_rose": rating_rose}
+
+
+
+# ── portfolio ────────────────────────────────────────────────────────────
+def looks_like_project(path):
+    """A directory worth scanning as an app in its own right."""
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return False
+    if any(n.endswith((".xcodeproj", ".xcworkspace")) for n in names):
+        return True
+    # A plain Swift package or loose sources still count.
+    if "Package.swift" in names:
+        return True
+    # Sources are rarely at the top level — an Xcode app puts them one directory
+    # down. Walk properly rather than peeking at the root and giving up, which
+    # made every real project look like "not an app".
+    for _, dirnames, filenames in os.walk(path):
+        prune(dirnames)
+        if any(f.endswith(tuple(CODE_EXTS)) for f in filenames):
+            return True
+    return False
+
+
+def scan_portfolio(root, expect, made_for_kids):
+    """Scan every app under a directory.
+
+    A studio with a dozen apps does not want to run this twelve times, and the
+    aggregate is what tells them where to look first.
+    """
+    apps = []
+    try:
+        entries = sorted(os.listdir(root))
+    except OSError as exc:
+        return None, "cannot read %s: %s" % (root, exc)
+    for name in entries:
+        path = os.path.join(root, name)
+        if not os.path.isdir(path) or name.startswith("."):
+            continue
+        if not looks_like_project(path):
+            continue
+        fired, counts, suppressed = scan(path)
+        rep = build_report(path, fired, counts, scan_privacy_manifests(path),
+                           scan_info_plists(path), {}, suppressed, made_for_kids)
+        exceeded = (RATING_ORDER.index(rep["minimum_rating"])
+                    > RATING_ORDER.index(expect))
+        apps.append({
+            "name": name,
+            "rating": rep["minimum_rating"],
+            "worst_case": rep["worst_case_rating"],
+            "social_media": rep["capabilities"]["social_media"]["answer"],
+            "open_questions": len(rep["interview_pending"]),
+            "carve_out": rep["carve_out"]["verdict"],
+            "kids_blocked": bool(rep.get("made_for_kids")
+                                 and rep["made_for_kids"]["blocked"]),
+            "exceeded": exceeded,
+        })
+    if not apps:
+        return None, ("no Xcode projects found under %s — point --portfolio at a "
+                      "directory whose children are apps" % root)
+    return {"root": os.path.abspath(root), "expect": expect, "apps": apps}, None
+
+
+def render_portfolio(pf, use_color):
+    out = [c("1", "shipgate portfolio — %s" % pf["root"], use_color),
+           "%d app(s), expecting %s or lower." % (len(pf["apps"]), pf["expect"]),
+           ""]
+    out.append("%-24s %-7s %-11s %-6s %s"
+               % ("APP", "RATING", "SOCIAL", "OPEN", ""))
+    out.append("-" * 62)
+    for a in sorted(pf["apps"], key=lambda x: -RATING_ORDER.index(x["rating"])):
+        flags = []
+        if a["exceeded"]:
+            flags.append(c("1;31", "above expected", use_color))
+        if a["kids_blocked"]:
+            flags.append(c("1;31", "kids-blocked", use_color))
+        if a["worst_case"] != a["rating"]:
+            flags.append(c("33", "could reach %s" % a["worst_case"], use_color))
+        out.append("%-24s %-7s %-11s %-6d %s"
+                   % (a["name"][:24], a["rating"], a["social_media"],
+                      a["open_questions"], "  ".join(flags)))
+    out.append("-" * 62)
+    over = [a for a in pf["apps"] if a["exceeded"]]
+    out.append("%d of %d above %s." % (len(over), len(pf["apps"]), pf["expect"]))
+    missing = [a for a in pf["apps"] if a["carve_out"] == "missing"]
+    if missing:
+        out.append(c("33", "%d with a social capability and no Declared Age "
+                           "Range call: %s"
+                     % (len(missing), ", ".join(a["name"] for a in missing)),
+                     use_color))
+    return "\n".join(out)
+
+
 # ── report assembly ──────────────────────────────────────────────────────
 def build_report(root, fired, counts, manifests, plists, given,
                  suppressed=None, made_for_kids=False):
@@ -743,6 +938,7 @@ def build_report(root, fired, counts, manifests, plists, given,
         "in_app_controls": controls,
         "made_for_kids": kids,
         "suppressed": suppressed or [],
+        "remediation": [],  # filled below; needs the finished report
         "capabilities": {
             c: {
                 "label": CAPABILITIES[c]["label"],
@@ -943,6 +1139,34 @@ def render_text(rep, use_color):
         out.append(c("2", "  Answer them:  shipgate.py PATH --interview", use_color))
         out.append(c("2", "  Or in CI:     shipgate.py PATH --answers-template > "
                           "answers.json", use_color))
+        out.append("")
+
+    drift = rep.get("baseline_drift")
+    if drift and (drift["regressions"] or drift["changes"]):
+        if drift["regressions"]:
+            out.append(c("1;31", "✗ Answers got stricter since the baseline",
+                         use_color))
+        else:
+            out.append(c("33", "· Answers changed since the baseline", use_color))
+        for r in drift["changes"]:
+            out.append("    %-28s %s → %s" % (r["label"], r["was"], r["now"]))
+        if drift["rating_rose"]:
+            out.append(c("1;31", "    rating %s → %s"
+                         % (drift["rating_was"], drift["rating_now"]), use_color))
+        out.append("")
+
+    drift = rep.get("baseline_drift")
+    if drift and (drift["regressions"] or drift["changes"]):
+        if drift["regressions"]:
+            out.append(c("1;31", "✗ Answers got stricter since the baseline",
+                         use_color))
+        else:
+            out.append(c("33", "· Answers changed since the baseline", use_color))
+        for r in drift["changes"]:
+            out.append("    %-28s %s → %s" % (r["label"], r["was"], r["now"]))
+        if drift["rating_rose"]:
+            out.append(c("1;31", "    rating %s → %s"
+                         % (drift["rating_was"], drift["rating_now"]), use_color))
         out.append("")
 
     sup = rep.get("suppressed") or []
@@ -1149,6 +1373,19 @@ def main():
                     help="Your app is (or wants to be) in the Made for Kids "
                          "category. Requires a calculated 4+/9+ and is permanent "
                          "once approved, so anything above 9+ is a hard failure.")
+    ap.add_argument("--target", metavar="RATING", default="4+",
+                    help="Rating you WANT. --remediate explains what would have "
+                         "to change to reach it. Default 4+.")
+    ap.add_argument("--remediate", action="store_true",
+                    help="Print what would have to change to reach --target")
+    ap.add_argument("--portfolio", metavar="DIR",
+                    help="Scan every Xcode project under DIR and print a table")
+    ap.add_argument("--baseline", metavar="FILE",
+                    help="Compare against a saved snapshot and fail if any "
+                         "answer got stricter (catches a PR that CHANGES your "
+                         "answers, which --expect cannot)")
+    ap.add_argument("--save-baseline", metavar="FILE",
+                    help="Write the current answers as a baseline snapshot")
     ap.add_argument("--xcode", action="store_true",
                     help="Emit Xcode-parseable diagnostics (file:line: warning:) "
                          "so findings appear inline in the editor from a Run "
@@ -1163,6 +1400,10 @@ def main():
 
     use_color = not args.no_color and sys.stdout.isatty()
 
+    if args.target not in RATING_ORDER:
+        print("error: --target must be one of %s (got %r)"
+              % (", ".join(RATING_ORDER), args.target), file=sys.stderr)
+        return 2
     if args.expect not in RATING_ORDER:
         print("error: --expect must be one of %s (got %r)"
               % (", ".join(RATING_ORDER), args.expect), file=sys.stderr)
@@ -1180,6 +1421,18 @@ def main():
     if args.answers_template:
         print(answers_template())
         return 0
+
+    if args.portfolio:
+        pf, err = scan_portfolio(args.portfolio, args.expect, args.made_for_kids)
+        if err:
+            print("error: " + err, file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(pf, indent=2))
+        else:
+            print(render_portfolio(pf, use_color))
+        return 1 if any(a["exceeded"] or a["kids_blocked"]
+                        for a in pf["apps"]) else 0
 
     if args.ipa:
         inventory, err = scan_ipa(args.ipa)
@@ -1222,6 +1475,7 @@ def main():
 
     rep = build_report(args.path, fired, counts, manifests, plists, given,
                        suppressed, args.made_for_kids)
+    rep["remediation"] = remediation(rep, args.target)
 
     if args.interview and rep["interview_pending"]:
         qmap = {q["id"]: q for q in INTERVIEW}
@@ -1229,12 +1483,48 @@ def main():
         given.update(asked)
         rep = build_report(args.path, fired, counts, manifests, plists, given,
                        suppressed, args.made_for_kids)
+    rep["remediation"] = remediation(rep, args.target)
 
     if args.html:
         import report
         with open(args.html, "w", encoding="utf-8") as fh:
             fh.write(report.render_html(rep))
         print("Wrote %s" % args.html, file=sys.stderr)
+
+    if args.save_baseline:
+        with open(args.save_baseline, "w", encoding="utf-8") as fh:
+            json.dump(answer_snapshot(rep), fh, indent=2)
+        print("Wrote baseline %s" % args.save_baseline, file=sys.stderr)
+
+    drift = None
+    if args.baseline:
+        try:
+            with open(args.baseline, "r", encoding="utf-8") as fh:
+                drift = compare_baseline(rep, json.load(fh))
+        except (OSError, ValueError) as exc:
+            print("error: cannot read baseline: %s" % exc, file=sys.stderr)
+            return 2
+        rep["baseline_drift"] = drift
+
+    if args.remediate:
+        steps = rep.get("remediation") or []
+        if not steps:
+            print("Nothing to change — already at %s or lower." % args.target)
+        else:
+            print(c("1", "To reach %s you would have to change:" % args.target,
+                    use_color))
+            for st in steps:
+                print("")
+                print("  %s — currently %s (minimum %s)"
+                      % (c("1", st["label"], use_color),
+                         st["answer"].replace("-", " "), st["min_rating"]))
+                for a in st["actions"]:
+                    print("    · " + a)
+                for ev in st["evidence"]:
+                    print(c("2", "      %s  %s" % (ev["signal"],
+                                                   ", ".join(ev["where"])),
+                            use_color))
+        return 0
 
     if args.show_suppressed:
         sup = rep.get("suppressed") or []
@@ -1266,6 +1556,10 @@ def main():
     # make that pass.
     kids = rep.get("made_for_kids")
     if kids and kids["blocked"]:
+        return 1
+    # A stricter answer than the baseline is a failure even when the rating
+    # itself is unchanged — that is the whole point of tracking drift.
+    if drift and (drift["regressions"] or drift["rating_rose"]):
         return 1
     return 1 if (RATING_ORDER.index(rep["minimum_rating"])
                  > RATING_ORDER.index(args.expect)) else 0

@@ -105,6 +105,36 @@ gone=$(python3 "$CLI" "$tmpdir" --json 2>/dev/null | python3 -c "import json,sys
 [ "$gone" = "False" ] && echo "  ok   suppressed signal leaves the evidence" || { echo "  FAIL suppressed signal still present"; fail=1; }
 rm -rf "$tmpdir"
 
+echo "round-2 features:"
+# Remediation must name the specific signals, not give generic advice.
+rem=$(python3 "$CLI" "$HERE/fixtures/social-app" --remediate 2>/dev/null)
+case "$rem" in
+  *"Social Media needs BOTH legs"*"feed-view"*) echo "  ok   --remediate names the legs and the signals" ;;
+  *) echo "  FAIL --remediate output"; fail=1 ;;
+esac
+rem4=$(python3 "$CLI" "$HERE/fixtures/clean-app" --remediate 2>/dev/null)
+case "$rem4" in
+  *"Nothing to change"*) echo "  ok   --remediate is quiet on a 4+ app" ;;
+  *) echo "  FAIL --remediate should be quiet"; fail=1 ;;
+esac
+
+# Portfolio must find apps whose sources live BELOW the top level, which is
+# every real Xcode project.
+pf=$(python3 "$CLI" --portfolio "$HERE/fixtures" --json 2>/dev/null \
+  | python3 -c "import json,sys;d=json.load(sys.stdin);print(len(d['apps']))")
+[ "$pf" = "3" ] && echo "  ok   --portfolio finds all 3 fixtures" || { echo "  FAIL portfolio found $pf"; fail=1; }
+python3 "$CLI" --portfolio "$HERE/fixtures" >/dev/null 2>&1
+[ $? -eq 1 ] && echo "  ok   --portfolio exits 1 when an app exceeds" || { echo "  FAIL portfolio exit"; fail=1; }
+
+# Baseline drift must fail even when --expect is satisfied — that is the point.
+bl=$(mktemp "${TMPDIR:-/tmp}/shipgate-bl.XXXXXX")
+python3 "$CLI" "$HERE/fixtures/clean-app" --save-baseline "$bl" >/dev/null 2>&1
+python3 "$CLI" "$HERE/fixtures/clean-app" --baseline "$bl" >/dev/null 2>&1
+[ $? -eq 0 ] && echo "  ok   baseline vs itself passes" || { echo "  FAIL baseline self-compare"; fail=1; }
+python3 "$CLI" "$HERE/fixtures/social-app" --baseline "$bl" --expect 13+ >/dev/null 2>&1
+[ $? -eq 1 ] && echo "  ok   drift fails even when --expect is satisfied" || { echo "  FAIL drift should fail"; fail=1; }
+rm -f "$bl"
+
 echo "other modes:"
 python3 "$CLI" --explain >/dev/null 2>&1 && echo "  ok   --explain" || { echo "  FAIL --explain"; fail=1; }
 # NB: capture rather than pipe. Under `pipefail`, shipgate's intentional exit 1

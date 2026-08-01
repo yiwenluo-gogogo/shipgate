@@ -52,6 +52,51 @@ python3 shipgate.py /path/to/YourApp --answers answers.json
 Exit status is `1` when the predicted rating **exceeds `--expect`** (default `4+`),
 `0` otherwise — so it drops straight into a CI step or an Xcode build phase.
 
+## A whole portfolio at once
+
+```bash
+python3 shipgate.py --portfolio ~/code/ios-apps
+```
+
+```
+APP                      RATING  SOCIAL      OPEN
+--------------------------------------------------------------
+MiniGalaxy               13+     yes         5      above expected  could reach 16+
+TravelTogether           13+     likely-yes  9      above expected  could reach 16+
+Abandoned                4+      likely-no   6
+...
+3 of 22 above 4+.
+2 with a social capability and no Declared Age Range call: MiniGalaxy, TravelTogether
+```
+
+Scans every Xcode project under a directory. Exits non-zero if any app exceeds
+`--expect`, so a studio can gate its whole catalogue in one CI step.
+
+## What would it take to get to 4+?
+
+```bash
+python3 shipgate.py . --remediate --target 4+
+```
+
+A rating is a diagnosis; this is the treatment. It names the *specific* signals and
+file:line sites driving each capability, and for Social Media it tells you the thing
+that actually matters — you only have to break **one** of the two legs, not both.
+
+It will also stop you wasting a sprint on the wrong fix: gating your feed behind
+Declared Age Range does **not** lower the calculated rating. That's measured, not
+assumed — see below.
+
+## Catching drift, not just thresholds
+
+```bash
+python3 shipgate.py . --save-baseline .shipgate-baseline.json   # once
+python3 shipgate.py . --baseline .shipgate-baseline.json        # in CI
+```
+
+`--expect` answers "am I above a line". `--baseline` answers "**did this PR change
+what I would answer**" — which is the question an app already sitting at 13+ actually
+needs. A stricter answer fails the build even when the rating is unchanged.
+
 ## In Xcode
 
 Add a Run Script build phase and findings appear inline in the editor, on the line
