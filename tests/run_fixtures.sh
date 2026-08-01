@@ -135,6 +135,31 @@ python3 "$CLI" "$HERE/fixtures/social-app" --baseline "$bl" --expect 13+ >/dev/n
 [ $? -eq 1 ] && echo "  ok   drift fails even when --expect is satisfied" || { echo "  FAIL drift should fail"; fail=1; }
 rm -f "$bl"
 
+echo "round-3 features:"
+w=$(python3 "$CLI" --why graph-mute 2>/dev/null)
+case "$w" in
+  *"mutedUsers"*"shipgate:ignore graph-mute"*)
+    echo "  ok   --why shows the pattern and how to silence it" ;;
+  *) echo "  FAIL --why detail"; fail=1 ;;
+esac
+wl=$(python3 "$CLI" --why list 2>/dev/null | head -1)
+case "$wl" in *signals*) echo "  ok   --why list" ;; *) echo "  FAIL --why list"; fail=1 ;; esac
+wn=$(python3 "$CLI" --why definitely-not-a-signal 2>/dev/null)
+case "$wn" in *"No signal called"*) echo "  ok   --why unknown is graceful" ;; *) echo "  FAIL --why unknown"; fail=1 ;; esac
+
+# Config: file supplies defaults, CLI always wins, bad file is a hard error.
+cfgdir=$(mktemp -d); mkdir -p "$cfgdir/App"
+cp "$HERE/fixtures/social-app/SocialApp/FeedView.swift" "$cfgdir/App/"
+echo '{"expect": "13+"}' > "$cfgdir/.shipgate.json"
+python3 "$CLI" "$cfgdir" >/dev/null 2>&1
+[ $? -eq 0 ] && echo "  ok   config supplies expect" || { echo "  FAIL config expect"; fail=1; }
+python3 "$CLI" "$cfgdir" --expect 4+ >/dev/null 2>&1
+[ $? -eq 1 ] && echo "  ok   CLI flag overrides config" || { echo "  FAIL CLI should win"; fail=1; }
+echo 'not json at all' > "$cfgdir/.shipgate.json"
+python3 "$CLI" "$cfgdir" >/dev/null 2>&1
+[ $? -eq 2 ] && echo "  ok   unreadable config is a hard error" || { echo "  FAIL bad config"; fail=1; }
+rm -rf "$cfgdir"
+
 echo "other modes:"
 python3 "$CLI" --explain >/dev/null 2>&1 && echo "  ok   --explain" || { echo "  FAIL --explain"; fail=1; }
 # NB: capture rather than pipe. Under `pipefail`, shipgate's intentional exit 1

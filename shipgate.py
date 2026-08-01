@@ -657,6 +657,84 @@ def carve_out_status(fired, social_answer):
 
 
 
+
+
+# ── config ───────────────────────────────────────────────────────────────
+CONFIG_NAME = ".shipgate.json"
+
+
+def load_config(path, explicit=None):
+    """Project config, so CI and a local run cannot disagree.
+
+    Looked for beside the project being scanned. CLI flags always win — a config
+    file that silently overrode an explicit flag would be a trap.
+    """
+    candidate = explicit or (os.path.join(path, CONFIG_NAME) if path else None)
+    if not candidate or not os.path.exists(candidate):
+        return {}, None
+    try:
+        with open(candidate, "r", encoding="utf-8") as fh:
+            return json.load(fh), candidate
+    except (OSError, ValueError) as exc:
+        return {"_error": str(exc)}, candidate
+
+
+# ── signal introspection ─────────────────────────────────────────────────
+def render_why(query, use_color):
+    """Explain a signal, or list them all.
+
+    A classifier you cannot interrogate gets deleted the first time it is wrong
+    about your code. This is the answer to "why on earth did it flag that?".
+    """
+    by_id = {sig["id"]: sig for sig in SIGNALS}
+    if not query or query in ("all", "list"):
+        out = [c("1", "%d signals" % len(SIGNALS), use_color), ""]
+        for sig in sorted(SIGNALS, key=lambda x: (sorted(x["caps"]), x["id"])):
+            caps = ", ".join(sorted(sig["caps"])) or "(mitigating only)"
+            out.append("  %-24s %-8s %s" % (sig["id"], sig["confidence"], caps))
+        out.append("")
+        out.append(c("2", "shipgate.py --why SIGNAL for detail.", use_color))
+        return "\n".join(out)
+
+    sig = by_id.get(query)
+    if not sig:
+        near = [k for k in by_id if query.lower() in k.lower()]
+        msg = ["No signal called %r." % query]
+        if near:
+            msg.append("Did you mean: %s" % ", ".join(sorted(near)))
+        else:
+            msg.append("Run --why list to see all %d." % len(SIGNALS))
+        return "\n".join(msg)
+
+    out = [c("1", sig["id"], use_color), ""]
+    out.append("  Confidence  %s" % sig["confidence"])
+    out.append("  Counts for  %s" % (", ".join(
+        "%s%s" % (k, " (%s leg)" % v if v else "")
+        for k, v in sorted(sig["caps"].items())) or "nothing — mitigating only"))
+    if sig["reach"]:
+        out.append("  Reach       yes — implies content reaches a broad audience, "
+                   "which is what lets Social Media commit to a hard yes")
+    if sig["mitigates"]:
+        out.append("  Mitigates   %s (lowers its confidence when both fire)"
+                   % sig["mitigates"])
+    out.append("  Corpora     %s" % ", ".join(sorted(sig["corpora"])))
+    out.append("")
+    out.append("  Why it counts:")
+    out.append("    " + sig["why"])
+    if sig["note"]:
+        out.append("")
+        out.append("  Caveat:")
+        out.append("    " + sig["note"])
+    out.append("")
+    out.append("  Pattern:")
+    out.append("    " + sig["rx"].pattern)
+    out.append("")
+    out.append(c("2", "  Disagree? Silence it inline:", use_color))
+    out.append(c("2", "    // shipgate:ignore %s -- your reason" % sig["id"],
+                 use_color))
+    return "\n".join(out)
+
+
 # ── remediation ──────────────────────────────────────────────────────────
 def remediation(rep, target="4+"):
     """What would actually have to change to reach `target`.
@@ -1363,7 +1441,13 @@ def main():
                     help="Print a blank answers file and exit")
     ap.add_argument("--explain", action="store_true",
                     help="Print the rulebook: the five questions and what each costs")
-    ap.add_argument("--expect", metavar="RATING", default="4+",
+    ap.add_argument("--config", metavar="FILE",
+                    help="Config file (default: .shipgate.json beside the "
+                         "project). CLI flags always win over it.")
+    ap.add_argument("--why", metavar="SIGNAL", nargs="?", const="list",
+                    help="Explain a signal — what it matches and why it counts. "
+                         "`--why list` shows all of them.")
+    ap.add_argument("--expect", metavar="RATING", default=None,
                     help="Exit non-zero only if the predicted rating EXCEEDS this. "
                          "Default 4+. In CI, set it to your app's current App Store "
                          "rating so the build fails when a change would raise it — "
@@ -1373,7 +1457,7 @@ def main():
                     help="Your app is (or wants to be) in the Made for Kids "
                          "category. Requires a calculated 4+/9+ and is permanent "
                          "once approved, so anything above 9+ is a hard failure.")
-    ap.add_argument("--target", metavar="RATING", default="4+",
+    ap.add_argument("--target", metavar="RATING", default=None,
                     help="Rating you WANT. --remediate explains what would have "
                          "to change to reach it. Default 4+.")
     ap.add_argument("--remediate", action="store_true",
@@ -1399,6 +1483,30 @@ def main():
     args = ap.parse_args()
 
     use_color = not args.no_color and sys.stdout.isatty()
+
+    if args.why is not None:
+        print(render_why(args.why, use_color))
+        return 0
+
+    # CLI > config file > built-in default. Anything else would let a checked-in
+    # config quietly override a flag someone typed on purpose.
+    cfg, cfg_path = load_config(args.path, args.config)
+    if cfg.get("_error"):
+        print("error: cannot read %s: %s" % (cfg_path, cfg["_error"]),
+              file=sys.stderr)
+        return 2
+    if args.expect is None:
+        args.expect = cfg.get("expect", "4+")
+    if args.target is None:
+        args.target = cfg.get("target", "4+")
+    if not args.made_for_kids:
+        args.made_for_kids = bool(cfg.get("made_for_kids", False))
+    if not args.answers and cfg.get("answers"):
+        args.answers = os.path.join(os.path.dirname(cfg_path or "."),
+                                    cfg["answers"])
+    if not args.baseline and cfg.get("baseline"):
+        args.baseline = os.path.join(os.path.dirname(cfg_path or "."),
+                                     cfg["baseline"])
 
     if args.target not in RATING_ORDER:
         print("error: --target must be one of %s (got %r)"

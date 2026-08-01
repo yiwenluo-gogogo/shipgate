@@ -43,6 +43,17 @@ inputs:
     description: 'Fail the step when the predicted rating exceeds `expect`. Set false to report only.'
     required: false
     default: 'true'
+  comment:
+    description: >-
+      On a pull request, post the summary as a PR comment. Updates the same
+      comment on later runs instead of stacking a new one on every push.
+      Needs `permissions: pull-requests: write` in the calling workflow.
+    required: false
+    default: 'false'
+  github-token:
+    description: 'Token used to post the PR comment. Defaults to github.token.'
+    required: false
+    default: ${{ github.token }}
 
 outputs:
   rating:
@@ -74,6 +85,8 @@ runs:
         SG_JSON: ${{ inputs.json }}
         SG_SUMMARY: ${{ inputs.summary }}
         SG_FAIL: ${{ inputs.fail-on-exceed }}
+        SG_COMMENT: ${{ inputs.comment }}
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |
         # GitHub runs composite `shell: bash` as `bash --noprofile --norc -e -o
         # pipefail`. That -e is fatal here: shipgate exits non-zero *by design*
@@ -119,6 +132,29 @@ runs:
         # The scan is deterministic, so the two runs cannot disagree.
         if [ "$SG_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
           python3 "$CLI" "${args[@]}" --markdown >> "$GITHUB_STEP_SUMMARY" || true
+        fi
+
+        # PR comment. Upserts by a hidden marker so a 20-push PR gets one
+        # comment that stays current, not twenty stale ones.
+        if [ "${SG_COMMENT:-false}" = "true" ] && [ -n "${GITHUB_EVENT_PATH:-}" ]; then
+          pr=$(python3 -c "import json,os;d=json.load(open(os.environ['GITHUB_EVENT_PATH']));print((d.get('pull_request') or {}).get('number') or '')")
+          if [ -n "$pr" ]; then
+            marker="<!-- shipgate-report -->"
+            body_file="$RUNNER_TEMP/shipgate-comment.md"
+            printf '%s\n' "$marker" > "$body_file"
+            python3 "$CLI" "${args[@]}" --markdown >> "$body_file" || true
+            existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$pr/comments" \
+              --jq "[.[] | select(.body | startswith(\"$marker\"))] | .[0].id" 2>/dev/null || echo "")
+            if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" \
+                -F body=@"$body_file" >/dev/null 2>&1 \
+                && echo "updated PR comment" || echo "::warning::could not update PR comment"
+            else
+              gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$pr/comments" \
+                -F body=@"$body_file" >/dev/null 2>&1 \
+                && echo "posted PR comment" || echo "::warning::could not post PR comment (needs pull-requests: write)"
+            fi
+          fi
         fi
 
         # `status` is shipgate's own --expect comparison. Trust it rather than

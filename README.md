@@ -52,6 +52,50 @@ python3 shipgate.py /path/to/YourApp --answers answers.json
 Exit status is `1` when the predicted rating **exceeds `--expect`** (default `4+`),
 `0` otherwise — so it drops straight into a CI step or an Xcode build phase.
 
+## Disagree with a finding?
+
+```bash
+python3 shipgate.py --why graph-mute
+python3 shipgate.py --why list          # all 96 signals
+```
+
+Shows what the signal matches, which capability and which *leg* it counts toward,
+its caveats, the literal pattern, and the one-line comment that silences it. A
+classifier you can't interrogate gets deleted the first time it's wrong — this is
+the answer to "why on earth did it flag that?".
+
+## Config
+
+Drop a `.shipgate.json` beside your project so local runs and CI can't disagree:
+
+```json
+{
+  "expect": "13+",
+  "target": "4+",
+  "made_for_kids": false,
+  "answers": "answers.json",
+  "baseline": ".shipgate-baseline.json"
+}
+```
+
+CLI flags always win over the file — a checked-in config that silently overrode a
+flag someone typed on purpose would be a trap.
+
+## PR comments
+
+```yaml
+permissions:
+  pull-requests: write
+steps:
+  - uses: yiwenluo-gogogo/shipgate@main
+    with:
+      expect: '13+'
+      comment: 'true'
+```
+
+Posts the summary on the PR and **updates the same comment** on later pushes, so a
+20-commit PR gets one comment that stays current rather than twenty stale ones.
+
 ## A whole portfolio at once
 
 ```bash
