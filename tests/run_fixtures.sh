@@ -75,6 +75,36 @@ python3 "$CLI" "$HERE/fixtures/social-app" --expect 13+ >/dev/null 2>&1
 python3 "$CLI" "$HERE/fixtures/social-app" --expect bogus >/dev/null 2>&1
 [ $? -eq 2 ] && echo "  ok   invalid --expect exits 2" || { echo "  FAIL invalid --expect should exit 2"; fail=1; }
 
+echo "round-1 features:"
+# Made for Kids requires a calculated 4+/9+ and is permanent once approved, so a
+# kids app at 13+ must be a hard failure that --expect cannot talk its way out of.
+python3 "$CLI" "$HERE/fixtures/social-app" --made-for-kids >/dev/null 2>&1
+[ $? -eq 1 ] && echo "  ok   made-for-kids blocks a 13+ app" || { echo "  FAIL kids should block"; fail=1; }
+python3 "$CLI" "$HERE/fixtures/clean-app" --made-for-kids >/dev/null 2>&1
+[ $? -eq 0 ] && echo "  ok   made-for-kids passes a 4+ app" || { echo "  FAIL kids should pass"; fail=1; }
+python3 "$CLI" "$HERE/fixtures/social-app" --expect 13+ --made-for-kids >/dev/null 2>&1
+[ $? -eq 1 ] && echo "  ok   made-for-kids overrides --expect" || { echo "  FAIL kids must override expect"; fail=1; }
+
+# Xcode parses `path:line: level: message`; paths must be absolute to resolve.
+xc=$(python3 "$CLI" "$HERE/fixtures/social-app" --xcode 2>/dev/null | head -1)
+case "$xc" in
+  /*:[0-9]*:\ error:*|/*:[0-9]*:\ warning:*|/*:[0-9]*:\ note:*)
+    echo "  ok   --xcode emits absolute-path diagnostics" ;;
+  *) echo "  FAIL --xcode format: $xc"; fail=1 ;;
+esac
+
+# Suppression: a signal silenced inline must leave the findings AND be reviewable.
+tmpdir=$(mktemp -d)
+mkdir -p "$tmpdir/App"
+cat > "$tmpdir/App/S.swift" <<'SWIFT'
+struct A { var likeCount = 0 }  // shipgate:ignore amp-like -- counter, not a social like
+SWIFT
+n=$(python3 "$CLI" "$tmpdir" --json 2>/dev/null | python3 -c "import json,sys;print(len(json.load(sys.stdin)['suppressed']))")
+[ "$n" = "1" ] && echo "  ok   inline suppression records the hit" || { echo "  FAIL suppression n=$n"; fail=1; }
+gone=$(python3 "$CLI" "$tmpdir" --json 2>/dev/null | python3 -c "import json,sys;print(any(e['signal']=='amp-like' for e in json.load(sys.stdin)['capabilities']['social_media']['evidence']))")
+[ "$gone" = "False" ] && echo "  ok   suppressed signal leaves the evidence" || { echo "  FAIL suppressed signal still present"; fail=1; }
+rm -rf "$tmpdir"
+
 echo "other modes:"
 python3 "$CLI" --explain >/dev/null 2>&1 && echo "  ok   --explain" || { echo "  FAIL --explain"; fail=1; }
 # NB: capture rather than pipe. Under `pipefail`, shipgate's intentional exit 1

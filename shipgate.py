@@ -108,12 +108,39 @@ def iter_files(root):
                 yield path, corpus
 
 
+# Inline suppression. A static analyzer you cannot silence gets uninstalled the
+# first time it is wrong about your code, so this is table stakes rather than a
+# nicety. Bare `shipgate:ignore` suppresses every signal on the line; a
+# comma-separated list suppresses only those signals. Anything after `--` is a
+# reason, kept and shown with --show-suppressed so suppressions stay reviewable
+# instead of becoming invisible debt.
+#
+#     let isMuted = false   // shipgate:ignore graph-mute -- audio, not a user
+#     // shipgate:ignore amp-like -- "unlikely" in prose
+SUPPRESS_RX = re.compile(
+    r"shipgate:ignore(?:\s+([A-Za-z0-9_\-,\s]+?))?(?:\s*--\s*(.*))?$")
+
+
+def parse_suppression(line):
+    """Return (signal_ids or None for all, reason) if the line suppresses."""
+    m = SUPPRESS_RX.search(line)
+    if not m:
+        return None
+    ids = m.group(1)
+    reason = (m.group(2) or "").strip()
+    if ids:
+        ids = {p.strip() for p in ids.replace(" ", ",").split(",") if p.strip()}
+    return (ids or None, reason)
+
+
 def scan(root):
     """Run every signal against every file in its declared corpora.
 
-    Returns {signal_id: {"count", "hits": [{file,line,text}]}}.
+    Returns (fired, counts, suppressed). A suppression on the matching line or
+    the line immediately above it silences the signal there.
     """
     fired = {}
+    suppressed = []
     counts = {"source": 0, "deps": 0, "plist": 0, "entitlements": 0}
     for path, corpus in iter_files(root):
         counts[corpus] += 1
@@ -124,17 +151,32 @@ def scan(root):
             continue
         active = [s for s in SIGNALS if corpus in s["corpora"]]
         for lineno, line in enumerate(lines, 1):
+            # Same line, or the line above — both spellings are common and
+            # forcing one of them would just generate bug reports.
+            rule = parse_suppression(line)
+            if rule is None and lineno > 1:
+                rule = parse_suppression(lines[lineno - 2])
             for sig in active:
-                if sig["rx"].search(line):
-                    bucket = fired.setdefault(sig["id"], {"count": 0, "hits": []})
-                    bucket["count"] += 1
-                    if len(bucket["hits"]) < 5:
-                        bucket["hits"].append({
-                            "file": os.path.relpath(path, root),
-                            "line": lineno,
-                            "text": excerpt(line),
-                        })
-    return fired, counts
+                if not sig["rx"].search(line):
+                    continue
+                if rule is not None and (rule[0] is None or sig["id"] in rule[0]):
+                    suppressed.append({
+                        "signal": sig["id"],
+                        "file": os.path.relpath(path, root),
+                        "line": lineno,
+                        "reason": rule[1],
+                        "text": excerpt(line),
+                    })
+                    continue
+                bucket = fired.setdefault(sig["id"], {"count": 0, "hits": []})
+                bucket["count"] += 1
+                if len(bucket["hits"]) < 5:
+                    bucket["hits"].append({
+                        "file": os.path.relpath(path, root),
+                        "line": lineno,
+                        "text": excerpt(line),
+                    })
+    return fired, counts, suppressed
 
 
 # ── structured checks ────────────────────────────────────────────────────
@@ -615,7 +657,8 @@ def carve_out_status(fired, social_answer):
 
 
 # ── report assembly ──────────────────────────────────────────────────────
-def build_report(root, fired, counts, manifests, plists, given):
+def build_report(root, fired, counts, manifests, plists, given,
+                 suppressed=None, made_for_kids=False):
     evidence = collect_evidence(fired, manifests, plists)
 
     answers = {}
@@ -666,11 +709,40 @@ def build_report(root, fired, counts, manifests, plists, given):
             "carve-out you are also asserting age assurance — and Apple requires "
             "a real Declared Age Range call for it.")
 
+    # Made for Kids requires a CALCULATED rating of 4+ or 9+, and the choice is
+    # permanent once approved. A kids app that trips 13+ is not looking at a
+    # cosmetic rating change — it is looking at losing the category it was built
+    # for. This is the single most expensive way to be wrong about the
+    # questionnaire, so it gets its own top-level verdict.
+    kids = None
+    if made_for_kids:
+        blocked = RATING_ORDER.index(rating) > RATING_ORDER.index("9+")
+        at_risk_kids = RATING_ORDER.index(worst) > RATING_ORDER.index("9+")
+        kids = {
+            "declared": True,
+            "blocked": blocked,
+            "at_risk": at_risk_kids and not blocked,
+            "rating": rating,
+            "summary": (
+                "Made for Kids requires a calculated rating of 4+ or 9+. Your "
+                "answers calculate to %s, so this app cannot be Made for Kids as "
+                "it stands. The choice is permanent once approved, so fix the "
+                "capability or drop the category — you cannot undo it later."
+                % rating) if blocked else (
+                "Your answers calculate to %s, which is compatible with Made for "
+                "Kids. But the unclear answers could take you to %s, and Made "
+                "for Kids is permanent once approved. Settle them first."
+                % (rating, worst)) if at_risk_kids else (
+                "Calculated %s — compatible with Made for Kids." % rating),
+        }
+
     return {
         "root": os.path.abspath(root),
         "files_scanned": counts,
         "privacy_manifests": manifests["manifests"],
         "in_app_controls": controls,
+        "made_for_kids": kids,
+        "suppressed": suppressed or [],
         "capabilities": {
             c: {
                 "label": CAPABILITIES[c]["label"],
@@ -743,6 +815,17 @@ def render_text(rep, use_color):
                 out.append(c("1;33", "    ⚠ " + v["conflict"], use_color))
         out.append(c("2", "  These carry no rating of their own — they change how "
                           "you answer the content questions.", use_color))
+        out.append("")
+
+    kids = rep.get("made_for_kids")
+    if kids:
+        if kids["blocked"]:
+            out.append(c("1;31", "✗ MADE FOR KIDS: BLOCKED", use_color))
+        elif kids["at_risk"]:
+            out.append(c("1;33", "⚠ MADE FOR KIDS: AT RISK", use_color))
+        else:
+            out.append(c("32", "✓ Made for Kids: compatible", use_color))
+        out.append("  " + kids["summary"])
         out.append("")
 
     out.append(c("1", "Resulting age rating", use_color))
@@ -862,10 +945,60 @@ def render_text(rep, use_color):
                           "answers.json", use_color))
         out.append("")
 
+    sup = rep.get("suppressed") or []
+    if sup:
+        out.append(c("2", "%d hit(s) silenced by shipgate:ignore — "
+                          "re-run with --show-suppressed to review." % len(sup),
+                     use_color))
+        out.append("")
+
     out.append(c("2", "Deadline: %s. %s" % (REQUIREMENT["effective"],
                                             REQUIREMENT["wording"]), use_color))
     out.append(c("2", "Guidance tool, not legal advice. Re-check Apple's wording "
                       "before a submission you are betting on.", use_color))
+    return "\n".join(out)
+
+
+def render_xcode(rep):
+    """Xcode-parseable diagnostics.
+
+    Xcode turns `path:line: warning: message` from a Run Script phase into an
+    inline warning in the editor, which is where an iOS developer will actually
+    notice it. Paths must be absolute for Xcode to resolve them.
+    """
+    root = rep["root"]
+    out = []
+
+    def diag(rel, line, level, msg):
+        path = os.path.join(root, rel) if rel else root
+        out.append("%s:%d: %s: %s" % (path, line or 1, level, msg))
+
+    kids = rep.get("made_for_kids")
+    if kids and kids["blocked"]:
+        diag("", 0, "error", "Made for Kids: %s" % kids["summary"])
+
+    for key in CAPABILITY_ORDER:
+        cap = rep["capabilities"][key]
+        if cap["answer"] not in ("yes", "likely-yes", "unclear"):
+            continue
+        level = "warning" if cap["answer"] != "yes" else "error"
+        if cap["min_rating"] == "4+":
+            level = "note"
+        best = sorted(cap["evidence"], key=lambda r: -RANK[r["confidence"]])
+        hit = best[0]["hits"][0] if best and best[0]["hits"] else None
+        msg = ("%s: predicted %s (minimum %s) — %s"
+               % (cap["label"], cap["answer"].replace("-", " "),
+                  cap["min_rating"], best[0]["why"] if best else cap["why"]))
+        diag(hit["file"] if hit else "", hit["line"] if hit else 0, level, msg)
+
+    carve = rep["carve_out"]
+    if carve["relevant"] and carve["verdict"] in ("missing", "incomplete"):
+        diag("", 0, "warning",
+             "Under-13 carve-out %s: %s" % (carve["verdict"], carve["summary"]))
+
+    if not out:
+        out.append("%s:1: note: shipgate — no capability above 4+ predicted"
+                   % root)
     return "\n".join(out)
 
 
@@ -1012,6 +1145,16 @@ def main():
                          "rating so the build fails when a change would raise it — "
                          "an app that is legitimately 13+ should not have permanently "
                          "red CI. One of: " + ", ".join(RATING_ORDER))
+    ap.add_argument("--made-for-kids", action="store_true",
+                    help="Your app is (or wants to be) in the Made for Kids "
+                         "category. Requires a calculated 4+/9+ and is permanent "
+                         "once approved, so anything above 9+ is a hard failure.")
+    ap.add_argument("--xcode", action="store_true",
+                    help="Emit Xcode-parseable diagnostics (file:line: warning:) "
+                         "so findings appear inline in the editor from a Run "
+                         "Script build phase")
+    ap.add_argument("--show-suppressed", action="store_true",
+                    help="List hits silenced by `shipgate:ignore` comments")
     ap.add_argument("--markdown", action="store_true",
                     help="Emit a compact Markdown summary (for a CI job summary "
                          "or a PR comment)")
@@ -1065,7 +1208,7 @@ def main():
         print("error: %s is not a directory" % args.path, file=sys.stderr)
         return 2
 
-    fired, counts = scan(args.path)
+    fired, counts, suppressed = scan(args.path)
     manifests = scan_privacy_manifests(args.path)
     plists = scan_info_plists(args.path)
 
@@ -1077,13 +1220,15 @@ def main():
             print("error: cannot read answers file: %s" % exc, file=sys.stderr)
             return 2
 
-    rep = build_report(args.path, fired, counts, manifests, plists, given)
+    rep = build_report(args.path, fired, counts, manifests, plists, given,
+                       suppressed, args.made_for_kids)
 
     if args.interview and rep["interview_pending"]:
         qmap = {q["id"]: q for q in INTERVIEW}
         asked = run_interview([qmap[q["id"]] for q in rep["interview_pending"]])
         given.update(asked)
-        rep = build_report(args.path, fired, counts, manifests, plists, given)
+        rep = build_report(args.path, fired, counts, manifests, plists, given,
+                       suppressed, args.made_for_kids)
 
     if args.html:
         import report
@@ -1091,8 +1236,22 @@ def main():
             fh.write(report.render_html(rep))
         print("Wrote %s" % args.html, file=sys.stderr)
 
+    if args.show_suppressed:
+        sup = rep.get("suppressed") or []
+        if not sup:
+            print("No suppressions found.")
+        else:
+            print("%d hit(s) silenced by shipgate:ignore:" % len(sup))
+            for h in sup:
+                print("  %s:%d  %s" % (h["file"], h["line"], h["signal"]))
+                print("      %s" % h["text"])
+                print("      reason: %s" % (h["reason"] or "(none given)"))
+        return 0
+
     if args.json:
         print(json.dumps(rep, indent=2))
+    elif args.xcode:
+        print(render_xcode(rep))
     elif args.markdown:
         print(render_markdown(rep, args.expect))
     elif not args.html:
@@ -1102,6 +1261,12 @@ def main():
     # --expect to 4+ preserves "fail on anything above the floor", while an app
     # that is deliberately 13+ can set --expect 13+ and still get a signal the
     # day a change would push it to 16+.
+    # Made for Kids overrides --expect: the category requires a calculated
+    # 4+/9+ and is permanent once approved, so "I expected 13+" is not a way to
+    # make that pass.
+    kids = rep.get("made_for_kids")
+    if kids and kids["blocked"]:
+        return 1
     return 1 if (RATING_ORDER.index(rep["minimum_rating"])
                  > RATING_ORDER.index(args.expect)) else 0
 

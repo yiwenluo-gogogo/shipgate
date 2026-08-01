@@ -30,10 +30,11 @@ COMMITS_NO = ("no", "likely-no")
 
 
 def evaluate(path):
-    fired, counts = shipgate.scan(path)
+    fired, counts, suppressed = shipgate.scan(path)
     manifests = shipgate.scan_privacy_manifests(path)
     plists = shipgate.scan_info_plists(path)
-    return shipgate.build_report(path, fired, counts, manifests, plists, {})
+    return shipgate.build_report(path, fired, counts, manifests, plists, {},
+                                 suppressed)
 
 
 def score(label, predicted, pending):

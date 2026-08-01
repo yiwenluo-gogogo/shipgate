@@ -52,6 +52,44 @@ python3 shipgate.py /path/to/YourApp --answers answers.json
 Exit status is `1` when the predicted rating **exceeds `--expect`** (default `4+`),
 `0` otherwise — so it drops straight into a CI step or an Xcode build phase.
 
+## In Xcode
+
+Add a Run Script build phase and findings appear inline in the editor, on the line
+that caused them:
+
+```bash
+python3 "$SRCROOT/shipgate/shipgate.py" "$SRCROOT" --xcode || true
+```
+
+Drop the `|| true` once you're clean and a rating rise will fail the build.
+
+## Made for Kids
+
+```bash
+python3 shipgate.py . --made-for-kids
+```
+
+Made for Kids requires a **calculated** rating of 4+ or 9+, and the choice is
+**permanent once approved**. So a kids app that trips 13+ isn't facing a cosmetic
+rating change — it loses the category it was built for. This flag makes that a hard
+failure, and deliberately overrides `--expect`: "I expected 13+" is not a way to make
+an incompatible kids app pass.
+
+## Silencing a false positive
+
+Every static analyzer needs an escape hatch, or it gets uninstalled the first time
+it's wrong:
+
+```swift
+var isMuted = false   // shipgate:ignore graph-mute -- audio mute, not a user mute
+// shipgate:ignore -- everything on the next line
+```
+
+A bare `shipgate:ignore` silences every signal on the line; a comma-separated list
+silences only those. The comment works on the matching line or the one above it.
+Text after `--` is a reason, kept and shown by `--show-suppressed` so suppressions
+stay reviewable instead of becoming invisible debt.
+
 ## In CI
 
 ```yaml
