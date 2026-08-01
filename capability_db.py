@@ -152,6 +152,54 @@ CAPABILITIES = {
 CAPABILITY_ORDER = ["social_media", "web_access", "ugc", "messaging", "advertising"]
 
 
+# ── In-App Controls ──────────────────────────────────────────────────────
+# The questionnaire's first section, above Capabilities. Verified against the
+# live App Store Connect UI on 31 July 2026 — the docs do not make it obvious
+# that this section exists at all.
+#
+# These carry NO minimum rating of their own. They change how you are expected
+# to answer everything else: step 2 of the questionnaire says "If you have
+# in-app controls, consider what a user who has those turned on will encounter
+# while using your app." So a content question you would otherwise answer
+# "frequent" may become "infrequent" for a user with your controls enabled.
+#
+# Kept separate from CAPABILITIES so the rating computation is untouched.
+IN_APP_CONTROLS = {
+    "parental_controls": {
+        "label": "Parental Controls",
+        "question": "Does your app offer parental controls?",
+        # Live ASC UI wording, verbatim.
+        "definition": (
+            "Settings or tools that allow parents/guardians to monitor, manage "
+            "or restrict a child's access to in-app content or features that may "
+            "not be suitable."
+        ),
+        "why_it_matters": (
+            "Answering yes lets you answer the content questions for a user who "
+            "has those controls turned on. Answering yes without shipping real "
+            "controls is the kind of claim App Review checks."
+        ),
+    },
+    "age_assurance": {
+        "label": "Age Assurance",
+        "question": "Does your app confirm the user's age?",
+        # Live ASC UI wording, verbatim.
+        "definition": (
+            "Mechanism to confirm an individual's age meets the age requirement "
+            "for accessing specific content or services."
+        ),
+        "why_it_matters": (
+            "A Declared Age Range call is age assurance. If you are claiming the "
+            "under-13 social-media carve-out you are asserting age assurance "
+            "too, so these two answers need to agree with each other and with "
+            "your code."
+        ),
+    },
+}
+
+IN_APP_CONTROLS_ORDER = ["parental_controls", "age_assurance"]
+
+
 # ── the under-13 carve-out ───────────────────────────────────────────────
 UNDER_13_CARVE_OUT = {
     "label": "Social Media Disabled for Users Under 13",

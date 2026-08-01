@@ -159,6 +159,18 @@ border-radius:8px;padding:1rem 1.1rem;margin:1.5rem 0;background:var(--card)}
 </ul>
 <p class="note"><a href="https://developer.apple.com/help/app-store-connect/reference/age-ratings-values-and-definitions">https://developer.apple.com/help/app-store-connect/reference/age-ratings-values-and-definitions</a></p>
 </div>
+<h2>Before the capabilities: in-app controls</h2>
+<p>The questionnaire opens with a section the documentation barely mentions. Neither row carries a minimum rating, but both change how you are expected to answer everything after them &mdash; Apple asks you to consider what a user <em>with these turned on</em> encounters.</p>
+<div class="cap">
+<h3>Parental Controls</h3>
+<p><em>Does your app offer parental controls?</em></p>
+<div class="quote">Apple: &ldquo;Settings or tools that allow parents/guardians to monitor, manage or restrict a child&#x27;s access to in-app content or features that may not be suitable.&rdquo;</div>
+<p>Answering yes lets you answer the content questions for a user who has those controls turned on. Answering yes without shipping real controls is the kind of claim App Review checks.</p></div>
+<div class="cap">
+<h3>Age Assurance</h3>
+<p><em>Does your app confirm the user&#x27;s age?</em></p>
+<div class="quote">Apple: &ldquo;Mechanism to confirm an individual&#x27;s age meets the age requirement for accessing specific content or services.&rdquo;</div>
+<p>A Declared Age Range call is age assurance. If you are claiming the under-13 social-media carve-out you are asserting age assurance too, so these two answers need to agree with each other and with your code.</p></div>
 <h2>Social Media Disabled for Users Under 13</h2>
 <div class="cap">
 <div class="quote">Apple: &ldquo;Users under 13 don&#x27;t have access to social media capabilities. At a minimum, the Declared Age Range API is called to check users&#x27; age ranges before enabling social media features. Only age-appropriate UGC is delivered.&rdquo;</div>

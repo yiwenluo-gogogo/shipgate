@@ -34,6 +34,33 @@ check() {  # name  proj  expected_rating  expected_social
 echo "fixtures:"
 check "social-app" "$HERE/fixtures/social-app" "13+" "yes"
 check "clean-app"  "$HERE/fixtures/clean-app"  "4+"  "no"
+# In-App Controls must never move the rating — they carry no minimum of their own.
+check "controls-app" "$HERE/fixtures/controls-app" "4+" "no"
+
+echo "in-app controls:"
+ctl() {  # name proj key expected
+  local name="$1" proj="$2" key="$3" want="$4" got
+  got=$(python3 "$CLI" "$proj" --json 2>/dev/null \
+    | python3 -c "import json,sys;print(json.load(sys.stdin)['in_app_controls']['$key']['answer'])")
+  if [ "$got" = "$want" ]; then
+    echo "  ok   $name $key=$got"
+  else
+    echo "  FAIL $name $key=$got, want $want"; fail=1
+  fi
+}
+ctl "controls-app" "$HERE/fixtures/controls-app" "parental_controls" "yes"
+ctl "controls-app" "$HERE/fixtures/controls-app" "age_assurance"     "yes"
+ctl "clean-app"    "$HERE/fixtures/clean-app"    "parental_controls" "no"
+ctl "clean-app"    "$HERE/fixtures/clean-app"    "age_assurance"     "no"
+
+# A social app with no age assurance must raise the contradiction — this is the
+# case that renders with ZERO evidence, so it is exactly the one a naive
+# "only show what we detected" report silently drops.
+conflict=$(python3 "$CLI" "$HERE/fixtures/social-app" --json 2>/dev/null \
+  | python3 -c "import json,sys;print(bool(json.load(sys.stdin)['in_app_controls']['age_assurance'].get('conflict')))")
+[ "$conflict" = "True" ] \
+  && echo "  ok   social-app flags missing age assurance" \
+  || { echo "  FAIL social-app should flag missing age assurance"; fail=1; }
 
 echo "exit codes:"
 python3 "$CLI" "$HERE/fixtures/clean-app" >/dev/null 2>&1

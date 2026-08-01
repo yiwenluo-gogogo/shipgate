@@ -101,6 +101,12 @@ All five capability questions, ordered by what they cost you:
 | Messaging and Chat | 4+ | Users communicate directly |
 | Advertising | 4+ | An ad SDK or a declared advertising purpose |
 
+Plus the **In-App Controls** section the questionnaire opens with — Parental Controls
+and Age Assurance. Neither carries a minimum rating, but both change how you are
+expected to answer everything after them, because Apple asks you to consider what a
+user *with those turned on* encounters. It is easy to miss from the documentation
+alone; it is the first thing you see in the real form.
+
 Two things most developers get wrong, both of which this tool makes explicit:
 
 - **Plain UGC and plain chat are 4+.** Only the feed/discovery shape forces 13+.

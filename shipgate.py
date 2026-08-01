@@ -30,9 +30,9 @@ import re
 import sys
 import zipfile
 
-from capability_db import (CAPABILITIES, CAPABILITY_ORDER, INTERVIEW,
-                           RATING_ORDER, REQUIREMENT, UNDER_13_CARVE_OUT,
-                           max_rating)
+from capability_db import (CAPABILITIES, CAPABILITY_ORDER, IN_APP_CONTROLS,
+                           IN_APP_CONTROLS_ORDER, INTERVIEW, RATING_ORDER,
+                           REQUIREMENT, UNDER_13_CARVE_OUT, max_rating)
 from signals import (ADVERTISING_PURPOSES, NON_SOCIAL_CONTENT_TYPES, SIGNALS,
                      USER_CONTENT_DATA_TYPES, leg_of)
 
@@ -249,7 +249,8 @@ def collect_evidence(fired, manifests, plists):
         if sig["mitigates"] and sig["id"] in fired:
             mitigators.setdefault(sig["mitigates"], []).append(sig["id"])
 
-    evidence = {k: [] for k in list(CAPABILITIES) + ["carve_out"]}
+    evidence = {k: [] for k in
+                list(CAPABILITIES) + list(IN_APP_CONTROLS) + ["carve_out"]}
     for sid, bucket in fired.items():
         sig = by_id[sid]
         if not sig["caps"]:
@@ -639,10 +640,37 @@ def build_report(root, fired, counts, manifests, plists, given):
     social = answers["social_media"]["answer"]
     carve = carve_out_status(fired, social)
 
+    # In-App Controls carry no rating; they change how the content questions
+    # should be answered. Classified with the plain rule — there is no two-leg
+    # subtlety here, a control either exists in the code or it does not.
+    controls = {}
+    for key in IN_APP_CONTROLS_ORDER:
+        ans, why = classify(key, evidence[key])
+        controls[key] = {
+            "label": IN_APP_CONTROLS[key]["label"],
+            "question": IN_APP_CONTROLS[key]["question"],
+            "definition": IN_APP_CONTROLS[key]["definition"],
+            "why_it_matters": IN_APP_CONTROLS[key]["why_it_matters"],
+            "answer": ans,
+            "why": why,
+            "evidence": evidence[key],
+        }
+
+    # A carve-out claim asserts age assurance. If the code shows no age
+    # assurance at all, those two answers are about to contradict each other.
+    if (carve["relevant"]
+            and controls["age_assurance"]["answer"] in ("no", "likely-no")):
+        controls["age_assurance"]["conflict"] = (
+            "You appear to have a social media capability, but no age-assurance "
+            "mechanism is detectable. If you answer yes to the under-13 "
+            "carve-out you are also asserting age assurance — and Apple requires "
+            "a real Declared Age Range call for it.")
+
     return {
         "root": os.path.abspath(root),
         "files_scanned": counts,
         "privacy_manifests": manifests["manifests"],
+        "in_app_controls": controls,
         "capabilities": {
             c: {
                 "label": CAPABILITIES[c]["label"],
@@ -698,6 +726,24 @@ def render_text(rep, use_color):
             c(style, "%-10s" % label, use_color),
             c("2", "min %s" % cap["min_rating"], use_color)))
     out.append("")
+
+    ctrl = rep.get("in_app_controls") or {}
+    # Show the block when a control was detected OR when one is conspicuously
+    # ABSENT in a way that will contradict an answer you are about to give. The
+    # absence case is the whole point of the age-assurance check, so gating on
+    # evidence alone hid it exactly when it mattered.
+    if any(v["answer"] != "no" or v.get("conflict") for v in ctrl.values()):
+        out.append(c("1", "In-app controls", use_color))
+        for key in IN_APP_CONTROLS_ORDER:
+            v = ctrl[key]
+            style, label = ANSWER_STYLE[v["answer"]]
+            out.append("  %-28s %s" % (v["label"],
+                                       c(style, "%-10s" % label, use_color)))
+            if v.get("conflict"):
+                out.append(c("1;33", "    ⚠ " + v["conflict"], use_color))
+        out.append(c("2", "  These carry no rating of their own — they change how "
+                          "you answer the content questions.", use_color))
+        out.append("")
 
     out.append(c("1", "Resulting age rating", use_color))
     out.append("  As predicted today:  " + c("1;36", rep["minimum_rating"], use_color))
@@ -757,6 +803,25 @@ def render_text(rep, use_color):
                    "9 July news post you are IN.")
         out.append("  Document this before you submit — it is the single most "
                    "defensible thing you can attach to a rating appeal.")
+        out.append("")
+
+    for key in IN_APP_CONTROLS_ORDER:
+        v = (rep.get("in_app_controls") or {}).get(key)
+        if not v or not v["evidence"]:
+            continue
+        style, label = ANSWER_STYLE[v["answer"]]
+        out.append(c("1", "%s — " % v["label"], use_color)
+                   + c(style, label, use_color)
+                   + c("2", "  (no rating attached)", use_color))
+        out.append("  " + v["why_it_matters"])
+        for r in sorted(v["evidence"], key=lambda x: -RANK[x["confidence"]])[:3]:
+            out.append("    %s %s" % (c("36", r["signal"], use_color),
+                                      c("2", "(%s)" % r["confidence"], use_color)))
+            for h in r["hits"][:2]:
+                loc = f"{h['file']}:{h['line']}" if h["line"] else h["file"]
+                out.append("      %s  %s" % (loc, c("2", h["text"], use_color)))
+            if r["note"]:
+                out.append(c("2", "      note: " + r["note"], use_color))
         out.append("")
 
     carve = rep["carve_out"]

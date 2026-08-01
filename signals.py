@@ -422,6 +422,42 @@ SIGNALS = [
       "Push categories for comments/mentions/follows/likes only exist when "
       "other users act on your content", reach=True),
 
+    # ── In-App Controls ──────────────────────────────────────────────────
+    # The questionnaire's first section. No rating attached; these change how
+    # you answer everything else.
+    S("pc-familycontrols", r"\bFamilyControls\b|\bManagedSettings\b|"
+                           r"\bDeviceActivity\b|\bAuthorizationCenter\b", "high",
+      {"parental_controls": None},
+      "Apple's Screen Time / FamilyControls frameworks are parental controls",
+      corpora=("source", "deps")),
+    S("pc-gate", r"\b(parentalGate|parentGate|ParentalControls?|parentalLock|"
+                 r"kidsMode|childLock|childMode|guardianPIN|parentPIN|"
+                 r"restrictedMode|contentRestriction)\b", "high",
+      {"parental_controls": None},
+      "An in-app parental gate or restricted mode"),
+    S("pc-pin", r"\b(pinLock|passcodeLock|appLock|requirePasscode)\b", "low",
+      {"parental_controls": None},
+      "A passcode lock — sometimes a parental control, often just privacy",
+      note="A lock on the whole app is not necessarily a parental control. "
+           "Verify it restricts content rather than access."),
+
+    S("aa-declaredagerange", r"\bDeclaredAgeRange\b|\bAgeRangeService\b|"
+                             r"\brequestAgeRange\s*\(", "high",
+      {"age_assurance": None},
+      "A Declared Age Range call is age assurance — Apple's own mechanism",
+      corpora=("source", "deps")),
+    S("aa-dob-gate", r"\b(ageGate|AgeGate|isOver13|isOver18|isAdult|"
+                     r"verifyAge|ageVerif\w*|AgeVerification|minimumAge|"
+                     r"birthDate|dateOfBirth|birthYear|dobPicker)\b", "medium",
+      {"age_assurance": None},
+      "A date-of-birth or age-gate flow confirms the user's age",
+      note="A birthdate field collected for a profile is not necessarily an "
+           "age gate. Check whether it actually restricts anything."),
+    S("aa-vendor", r"\bk-?ID\b|\bAgeKit\b|\bYoti\b|\bPersonaKit\b|\bIncode\b|"
+                   r"\bVerifyMy\b|\bAgeChecked\b|\bSuperAwesome\b", "high",
+      {"age_assurance": None},
+      "A third-party age-assurance vendor SDK", corpora=("source", "deps")),
+
     # ── Declared Age Range (the carve-out check) ─────────────────────────
     S("dar-import", r"^\s*import\s+DeclaredAgeRange\b", "high", {"carve_out": None},
       "The DeclaredAgeRange framework is imported"),

@@ -7,7 +7,8 @@ this gets attached to an App Review appeal or dropped in a CI artifact bucket.
 
 import html
 
-from capability_db import (CAPABILITIES, CAPABILITY_ORDER, REQUIREMENT,
+from capability_db import (CAPABILITIES, CAPABILITY_ORDER, IN_APP_CONTROLS,
+                           IN_APP_CONTROLS_ORDER, REQUIREMENT,
                            UNDER_13_CARVE_OUT)
 
 CSS = """
@@ -196,6 +197,21 @@ def render_explain_html():
           % (e(cap["source"]), e(cap["source"])))
         w("</div>")
 
+    # In-App Controls — the section that exists in the real form but is easy
+    # to miss from the documentation alone.
+    w("<h2>Before the capabilities: in-app controls</h2>")
+    w("<p>The questionnaire opens with a section the documentation barely "
+      "mentions. Neither row carries a minimum rating, but both change how you "
+      "are expected to answer everything after them &mdash; Apple asks you to "
+      "consider what a user <em>with these turned on</em> encounters.</p>")
+    for key in IN_APP_CONTROLS_ORDER:
+        ctl = IN_APP_CONTROLS[key]
+        w('<div class="cap">')
+        w("<h3>%s</h3>" % e(ctl["label"]))
+        w("<p><em>%s</em></p>" % e(ctl["question"]))
+        w('<div class="quote">Apple: &ldquo;%s&rdquo;</div>' % e(ctl["definition"]))
+        w("<p>%s</p></div>" % e(ctl["why_it_matters"]))
+
     # Carve-out.
     w("<h2>%s</h2>" % e(UNDER_13_CARVE_OUT["label"]))
     w('<div class="cap">')
@@ -305,6 +321,45 @@ def render_html(rep):
           "<strong>out of scope</strong>; under the 9 July 2026 news post you are "
           "<strong>in</strong>. Keep this page — it is the most defensible thing "
           "you can attach to a rating appeal.</p></div>")
+
+    # ── in-app controls ──────────────────────────────────────────────────
+    ctrl = rep.get("in_app_controls") or {}
+    if any(v["answer"] != "no" or v.get("conflict") for v in ctrl.values()):
+        w("<h2>In-app controls</h2>")
+        w("<p>The questionnaire's first section. These carry no minimum rating "
+          "of their own &mdash; they change how you are expected to answer the "
+          "content questions, because Apple asks you to consider what a user "
+          "<em>with your controls turned on</em> will encounter.</p>")
+        for key in ("parental_controls", "age_assurance"):
+            v = ctrl.get(key)
+            if not v:
+                continue
+            w('<div class="cap">')
+            w("<h3>%s <span class='tag a-%s'>%s</span></h3>"
+              % (e(v["label"]), e(v["answer"]),
+                 e(v["answer"].replace("-", " ").upper())))
+            w('<div class="quote">Apple: &ldquo;%s&rdquo;</div>'
+              % e(v["definition"]))
+            w('<p class="why">%s</p>' % e(v["why_it_matters"]))
+            for r in sorted(v["evidence"],
+                            key=lambda x: -{"low": 0, "medium": 1,
+                                            "high": 2}[x["confidence"]]):
+                w('<div class="sig">')
+                w('<div><span class="name">%s</span> '
+                  '<span class="meta">%s confidence &middot; %d occurrence(s)'
+                  "</span></div>" % (e(r["signal"]), e(r["confidence"]),
+                                     r["count"]))
+                w('<p class="why">%s</p>' % e(r["why"]))
+                for h in r["hits"]:
+                    loc = "%s:%s" % (h["file"], h["line"]) if h["line"] else h["file"]
+                    w('<span class="hit">%s &nbsp; %s</span>' % (e(loc), e(h["text"])))
+                if r["note"]:
+                    w('<p class="note">%s</p>' % e(r["note"]))
+                w("</div>")
+            if v.get("conflict"):
+                w('<div class="flag"><h3>These two answers will contradict each '
+                  "other</h3><p>%s</p></div>" % e(v["conflict"]))
+            w("</div>")
 
     # ── per-capability evidence ──────────────────────────────────────────
     w("<h2>Evidence</h2>")
